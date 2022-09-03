@@ -1,0 +1,18 @@
+[package]
+name = "rust-kube-operator"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+default = ["runtime"]
+runtime = ["kube/runtime"]
+
+[dependencies]
+kube = { version = "0.74.0", feature = ["runtime", "derive"] }
+k8s-openapi = { version = "0.15.0", features = ["v1_24"] }
+tokio = { version = "1.21.0", features = ["full"] }
+futures = "0.3"
+serde_json = "1.0.85"
+tracing = "0.1.36"
+tracing-subscriber = "0.3.15"
