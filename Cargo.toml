@@ -2,6 +2,12 @@
 name = "rust-kube-operator"
 version = "0.1.0"
 edition = "2021"
+default-run = "operator"
+
+[[bin]]
+cap = false
+name = "operator"
+path = "src/main.rs"
 
 [[bin]]
 cap = false
