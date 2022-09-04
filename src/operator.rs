@@ -226,4 +226,9 @@ impl Operator {
 
         (Self { diagnostics }, controller)
     }
+
+    /// State getter
+    pub async fn diagnostics(&self) -> Diagnostics {
+        self.diagnostics.read().await.clone()
+    }
 }

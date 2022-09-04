@@ -11,13 +11,14 @@ path = "src/lib.rs"
 default = []
 
 [dependencies]
+actix-web = "4.1.0"
 k8s-openapi = { version = "0.15.0", features = ["v1_24"] }
 tokio = { version = "1.21.0", features = ["full"] }
 futures = "0.3"
 serde_json = "1.0.85"
 serde = "1.0.144"
 tracing = "0.1.36"
-tracing-subscriber = "0.3.15"
+tracing-subscriber = { version = "0.3.15", features = ["json", "env-filter"] }
 schemars = "0.8.10"
 prometheus = "0.13.1"
 chrono = { version = "0.4.22", features = ["serde"] }

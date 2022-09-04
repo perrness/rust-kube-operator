@@ -1,89 +1,53 @@
-use kube::{Client, api::{Api, ListParams, ResourceExt, PostParams, PatchParams, Patch, DeleteParams}, runtime::wait::{await_condition, conditions::is_pod_running}};
-use k8s_openapi::api::core::v1::Pod;
-use serde_json::json;
-use tracing::info;
+use kube::runtime::wait::Error;
+pub use operator::operator::*;
+use actix_web::{HttpRequest, Responder, HttpResponse, get, HttpServer, App, web::Data, middleware};
+use tracing::{info, warn};
+use tracing_subscriber::{prelude::*, EnvFilter};
+
+#[get("/health")]
+async fn health(_: HttpRequest) -> impl Responder {
+    HttpResponse::Ok().json("healthy")
+}
+
+#[get("/")]
+async fn index(c: Data<Operator>, _req: HttpRequest) -> impl Responder {
+    let d = c.diagnostics().await;
+    HttpResponse::Ok().json(&d)
+}
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Tracing logs
-    tracing_subscriber::fmt::init();
+async fn main() -> Result<(), Error> {
+    // Setup tracing layers
+    // let logger = tracing_subscriber::fmt::layer();
+    // let env_filter = EnvFilter::try_from_default_env()
+    //     .or_else(|_| EnvFilter::try_new("info"))
+    //     .unwrap();
 
-    // Infer the runtime environment and try to create a Kubernetes Client
-    let client = Client::try_default().await?;
+    // Decide on layers
+    // TODO
+    
 
-    // Create pod in namepace
-    let pods = Api::namespaced(client, "per-controller");
-    let p: Pod = serde_json::from_value(json!({
-        "apiVersion": "v1",
-        "kind": "Pod",
-        "metadata": {
-            "name": "per-controller-pod",
-            "labels": {
-                "name": "per-controller-pod-label"
-            }
-        },
-        "spec": {
-            "containers": [{
-                "name": "nginx",
-                "image": "nginx:1.14.2",
-                "ports": [{
-                    "containerPort": 80
-                }]
-            }]
-        }
-    }))?; 
+    // Initialize tracing
+    // tracing::subscriber::set_global_default(collector).unwrap(),
 
-    let pp = PostParams::default();
-    match pods.create(&pp, &p).await {
-        Ok(o) => {
-            let name = o.name_any();
-            assert_eq!(p.name_any(), name);
-            info!("Created {}", name);
-        },
-        Err(kube::Error::Api(ae)) => assert_eq!(ae.code, 409), // If you skipped delete, for instance
-        Err(e) => return Err(e.into()),
-    }
+    // Start kubernetes controller
+    let (operator, controller) = Operator::new().await;
 
-    // Watch the pod for a few seconds
-    let establish = await_condition(pods.clone(), "per-controller-pod", is_pod_running());
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(15), establish).await?;
+    // Start web server
+    let server = HttpServer::new(move || {
+        App::new()
+            .app_data(Data::new(operator.clone()))
+            .wrap(middleware::Logger::default().exclude("/health"))
+            .service(index)
+            .service(health)
+    })
+    .bind("0.0.0.0:8080")
+    .expect("Can not bind to 0.0.0.0:8080")
+    .shutdown_timeout(5);
 
-    // Verify we can get it
-    info!("Get per-controller-pod");
-    let p1cpy = pods.get("per-controller-pod").await?;
-    if let Some(spec) = &p1cpy.spec {
-        info!("Got per-controller-pod with containers: {:?}", spec.containers);
-        assert_eq!(spec.containers[0].name, "nginx");
-    }
-
-    // Replace its spec
-    info!("Patch per-controller-pod");
-    let patch = json!({
-        "metadata": {
-            "resourceVersion": p1cpy.resource_version(),
-        },
-        "spec": {
-            "activeDeadlineSeconds": 5
-        }
-    });
-    let patchparams = PatchParams::default();
-    let p_patched = pods.patch("per-controller-pod", &patchparams, &Patch::Merge(&patch)).await?;
-    assert_eq!(p_patched.spec.unwrap().active_deadline_seconds, Some(5));
-
-    let lp = ListParams::default().fields(&format!("metadata.name={}", "per-controller-pod"));
-    for p in pods.list(&lp).await? {
-        info!("Found Pod: {}", p.name_any());
-    }
-
-    let dp = DeleteParams::default();
-    pods.delete("per-controller-pod", &dp).await?.map_left(|pdel| {
-        assert_eq!(pdel.name_any(), "per-controller-pod");
-        info!("Deleting per-controller-pod started {:?}", pdel);
-    });
-
-    // Read pods in the configured namespace into the typed interface from k8s-openapi
-    for p in pods.list(&ListParams::default()).await? {
-        println!("found pod {}", p.name_any());
+    tokio::select! {
+        _ = controller => warn!("controller exited"),
+        _ = server.run() => info!("actix exited"),
     }
 
     Ok(())
