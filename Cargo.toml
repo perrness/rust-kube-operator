@@ -3,6 +3,11 @@ name = "rust-kube-operator"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+cap = false
+name = "crdgen"
+path = "src/crdgen.rs"
+
 [lib]
 name = "operator"
 path = "src/lib.rs"
@@ -15,6 +20,7 @@ actix-web = "4.1.0"
 k8s-openapi = { version = "0.15.0", features = ["v1_24"] }
 tokio = { version = "1.21.0", features = ["full"] }
 futures = "0.3"
+serde_yaml = "0.9.11"
 serde_json = "1.0.85"
 serde = "1.0.144"
 tracing = "0.1.36"

@@ -8,5 +8,11 @@ pub enum Error {
     #[error("SerializationError: {0}")]
     SerializationError(#[source] serde_json::Error)
 }
+pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// State machinery for kubernetes, exposable to actix
 pub mod operator;
+pub use operator::Operator;
+
+/// Generate type, for crdgen
+pub use operator::CustomApp;
