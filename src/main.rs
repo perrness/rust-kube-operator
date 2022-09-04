@@ -1,10 +1,7 @@
-use std::thread;
-
 use kube::{Client, api::{Api, ListParams, ResourceExt, PostParams, PatchParams, Patch, DeleteParams}, runtime::wait::{await_condition, conditions::is_pod_running}};
 use k8s_openapi::api::core::v1::Pod;
 use serde_json::json;
 use tracing::info;
-
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
