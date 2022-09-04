@@ -21,6 +21,9 @@ use crate::Error;
 
 static CUSTOM_APP_FINALIZER: &str = "custom_apps.per.naess";
 
+/// Generate the Kubernetes wrapper struct "CustomApp" from our Spec and Status struct
+///
+/// This provides a hook for generating the CRD yaml(in crdgen.rs)
 #[derive(CustomResource, Deserialize, Serialize, Clone, Debug, JsonSchema)]
 #[kube(kind = "CustomApp", group = "per.naess", version = "v1", namespaced)]
 #[kube(status = "CustomAppStatus", shortname = "cap")]
@@ -30,6 +33,7 @@ pub struct CustomAppSpec {
     content: String
 }
 
+/// The status object of  `Document`
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct CustomAppStatus {
     hidden: bool
@@ -98,10 +102,14 @@ impl CustomApp {
     }
 }
 
+/// Context for our reconciler
 #[derive(Clone)]
 struct Context {
+    /// Kubernetes client
     client: Client,
+    /// Diagnostics read by the web server
     diagnostics: Arc<RwLock<Diagnostics>>,
+    /// Prometheus metrics
     metrics: Metrics,
 }
 
@@ -141,4 +149,10 @@ pub struct Diagnostics {
     pub last_event: DateTime<Utc> ,
     #[serde(skip)]
     pub reporter: Reporter,
+}
+
+/// Data owned by the Operator
+#[derive(Clone)]
+pub struct Operator {
+    /// Diagnostics populated by the reconciler
 }
