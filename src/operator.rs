@@ -1,21 +1,22 @@
 use std::{sync::Arc, time::Duration};
 
 use chrono::DateTime;
+use futures::{future::BoxFuture, FutureExt, StreamExt};
 use k8s_openapi::chrono::Utc;
 use kube::{
     CustomResource, Client, 
     runtime::{
         events::{Recorder, Reporter, EventType, Event},
-        controller::Action, finalizer,
+        controller::Action, finalizer, Controller,
     }, 
-    ResourceExt, Api, Resource, api::{Patch, PatchParams}
+    ResourceExt, Api, Resource, api::{Patch, PatchParams, ListParams}
 };
-use prometheus::{IntCounter, HistogramVec};
+use prometheus::{IntCounter, HistogramVec, register_histogram_vec, register_int_counter};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::{sync::RwLock, time::Instant};
-use tracing::{instrument, info};
+use tracing::{instrument, info, warn};
 
 use crate::Error;
 
@@ -142,6 +143,27 @@ pub struct Metrics {
     pub reconcile_duration: HistogramVec,
 }
 
+impl Metrics {
+    fn new() -> Self {
+        let reconcile_histogram = register_histogram_vec!(
+            "cap_controller_reconcile_duration_seconds",
+            "The duration of reconcile to complete in seconds",
+            &[],
+            vec![0.01, 0.1, 0.25, 0.5, 1., 5., 15., 60.]
+        )
+        .unwrap();
+
+        Metrics { 
+            reconciliations: register_int_counter!("cap_controller_reconciliations_total", "reconciliations").unwrap(), 
+            failures: register_int_counter!(
+                "cap_controller_reconciliation_errors_total",
+                "reconciliation errors"
+            ).unwrap(), 
+            reconcile_duration: reconcile_histogram 
+        }
+    }
+}
+
 // Diagnostics to be exposed on webserver
 #[derive(Clone, Serialize)]
 pub struct Diagnostics {
@@ -151,8 +173,57 @@ pub struct Diagnostics {
     pub reporter: Reporter,
 }
 
+impl Diagnostics {
+    fn new() -> Self {
+        Self {
+            last_event: Utc::now(),
+            reporter: "cap-reporter".into()
+        }
+    }
+}
+
 /// Data owned by the Operator
 #[derive(Clone)]
 pub struct Operator {
     /// Diagnostics populated by the reconciler
+    diagnostics: Arc<RwLock<Diagnostics>>,
+}
+
+fn error_policy(error: &Error, ctx: Arc<Context>) -> Action {
+    warn!("reconcile failed: {:?}", error);
+    Action::requeue(Duration::from_secs(5 * 60))
+}
+
+/// Operator that owns a Controller for CustomApp
+impl Operator {
+    /// Lifecycle initialization interface for app
+    ///
+    /// This returns a `Operator` that drives a `Controller` + a future to be awaited
+    /// It is up to `main` to wait for the controller stream
+    pub async fn new() -> (Self, BoxFuture<'static, ()>) {
+        let client = Client::try_default().await.expect("Create Client");
+        let metrics = Metrics::new();
+        let diagnostics = Arc::new(RwLock::new(Diagnostics::new()));
+        let context = Arc::new(Context {
+            client: client.clone(),
+            metrics: metrics.clone(),
+            diagnostics: diagnostics.clone(),
+        });
+
+        let caps = Api::<CustomApp>::all(client);
+        //Ensure CRD is installed before loop-watching
+        let _r = caps
+            .list(&ListParams::default().limit(1))
+            .await
+            .expect("Is the crd installed? please run: cargo run --bin crdgen | kubectl apply -f -");
+
+        // All good. Start controller and return its future.
+        let controller = Controller::new(caps, ListParams::default())
+            .run(reconcile, error_policy, context)
+            .filter_map(|x| async move { std::result::Result::ok(x) })
+            .for_each(|_| futures::future::ready(()))
+            .boxed();
+
+        (Self { diagnostics }, controller)
+    }
 }
