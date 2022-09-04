@@ -20,7 +20,7 @@ use tracing::{instrument, info, warn};
 
 use crate::Error;
 
-static CUSTOM_APP_FINALIZER: &str = "custom_apps.per.naess";
+static CUSTOM_APP_FINALIZER: &str = "customapps.per.naess";
 
 /// Generate the Kubernetes wrapper struct "CustomApp" from our Spec and Status struct
 ///
@@ -34,7 +34,7 @@ pub struct CustomAppSpec {
     content: String
 }
 
-/// The status object of  `Document`
+/// The status object of  `CustomApp`
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct CustomAppStatus {
     hidden: bool
@@ -47,7 +47,7 @@ impl CustomApp {
 
     async fn reconcile(&self, ctx: Arc<Context>) -> Result<Action, kube::Error> {
         let client = ctx.client.clone();
-        // ctx.diagnostics.write().await.last_event = Utc::now();
+        ctx.diagnostics.write().await.last_event = Utc::now();
         let reporter = ctx.diagnostics.read().await.reporter.clone();
         let recorder = Recorder::new(client.clone(), reporter, self.object_ref(&()));
         let name = self.name_any();
@@ -65,7 +65,7 @@ impl CustomApp {
                     action: "Reconciling".into(),
                     secondary: None,
                 })
-                .await?
+                .await?;
         }
         // always overwrite status object with what we saw
         let new_status = Patch::Apply(json!({
@@ -76,7 +76,7 @@ impl CustomApp {
             }
         }));
         let ps = PatchParams::apply("cntrlr").force();
-        let _0 = caps.patch(&name, &ps, &new_status).await?;
+        let _o = caps.patch(&name, &ps, &new_status).await?;
 
         // If no events were recieved, check back every 5 minutes
         Ok(Action::requeue(Duration::from_secs(5 * 60)))

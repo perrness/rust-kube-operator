@@ -20,20 +20,25 @@ path = "src/lib.rs"
 
 [features]
 default = []
+telemetry = ["tonic", "opentelemetry-otlp"]
 
 [dependencies]
 actix-web = "4.1.0"
 k8s-openapi = { version = "0.15.0", features = ["v1_24"] }
 tokio = { version = "1.21.0", features = ["full"] }
-futures = "0.3"
+futures = "0.3.21"
 serde_yaml = "0.9.11"
 serde_json = "1.0.85"
 serde = "1.0.144"
 tracing = "0.1.36"
-tracing-subscriber = { version = "0.3.15", features = ["json", "env-filter"] }
+tracing-subscriber = { version = "0.3.15", features = ["json", "env-filter", "fmt"] }
+tracing-opentelemetry = "0.17.4"
 schemars = "0.8.10"
 prometheus = "0.13.1"
 chrono = { version = "0.4.22", features = ["serde"] }
+opentelemetry = { version = "0.17.0", features = ["trace", "rt-tokio"]}
+opentelemetry-otlp = { version = "0.10.0", features = ["tokio"], optional = true }
+tonic = { version = "0.8.0", optional = true}
 thiserror = "1.0.33"
 
 [dependencies.kube]

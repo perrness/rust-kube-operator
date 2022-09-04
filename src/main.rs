@@ -1,8 +1,8 @@
 use kube::runtime::wait::Error;
 pub use operator::operator::*;
 use actix_web::{HttpRequest, Responder, HttpResponse, get, HttpServer, App, web::Data, middleware};
-use tracing::{info, warn};
-use tracing_subscriber::{prelude::*, EnvFilter};
+use tracing::{info, warn, subscriber};
+use tracing_subscriber::{prelude::*, EnvFilter, Registry, fmt};
 
 #[get("/health")]
 async fn health(_: HttpRequest) -> impl Responder {
@@ -18,10 +18,14 @@ async fn index(c: Data<Operator>, _req: HttpRequest) -> impl Responder {
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     // Setup tracing layers
-    // let logger = tracing_subscriber::fmt::layer();
-    // let env_filter = EnvFilter::try_from_default_env()
-    //     .or_else(|_| EnvFilter::try_new("info"))
-    //     .unwrap();
+    #[cfg(feature = "telemtry")]
+    let telemetry = tracing_opentelemetry::layer().with_tracer(telemetry::init_tracer().await);
+    //let logger = tracing_subscriber::fmt::layer();
+    let subscriber = Registry::default().with(fmt::Layer::default());
+    tracing::subscriber::set_global_default(subscriber);
+    let env_filter = EnvFilter::try_from_default_env()
+        .or_else(|_| EnvFilter::try_new("info"))
+        .unwrap();
 
     // Decide on layers
     // TODO
