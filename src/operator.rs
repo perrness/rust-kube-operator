@@ -76,7 +76,7 @@ impl CustomApp {
             }
         }));
         let ps = PatchParams::apply("cntrlr").force();
-        let _o = caps.patch(&name, &ps, &new_status).await?;
+        let _o = caps.patch_status(&name, &ps, &new_status).await?;
 
         // If no events were recieved, check back every 5 minutes
         Ok(Action::requeue(Duration::from_secs(5 * 60)))
