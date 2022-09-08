@@ -16,3 +16,6 @@ pub use operator::Operator;
 
 /// Generate type, for crdgen
 pub use operator::CustomApp;
+
+/// Log and trace integrations
+pub mod telemetry;

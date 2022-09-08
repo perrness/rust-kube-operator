@@ -11,14 +11,14 @@ use kube::{
     }, 
     ResourceExt, Api, Resource, api::{Patch, PatchParams, ListParams}
 };
-use prometheus::{IntCounter, HistogramVec, register_histogram_vec, register_int_counter};
+use prometheus::{IntCounter, HistogramVec, register_histogram_vec, register_int_counter, proto::MetricFamily, default_registry, timer::duration_to_millis};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::{sync::RwLock, time::Instant};
-use tracing::{instrument, info, warn};
+use tracing::{instrument, info, warn, Span, field};
 
-use crate::Error;
+use crate::{Error, telemetry};
 
 static CUSTOM_APP_FINALIZER: &str = "customapps.per.naess";
 
@@ -116,7 +116,10 @@ struct Context {
 
 #[instrument(skip(ctx, cap), fields(trace_id))]
 async fn reconcile(cap: Arc<CustomApp>, ctx: Arc<Context>) -> Result<Action, Error> {
+    let trace_id = telemetry::get_trace_id();
+    Span::current().record("trace_id", &field::display(&trace_id));
     let start = Instant::now();
+    ctx.metrics.reconciliations.inc();
     let client = ctx.client.clone();
     let name = cap.name_any();
     let ns = cap.namespace().unwrap();
@@ -130,6 +133,12 @@ async fn reconcile(cap: Arc<CustomApp>, ctx: Arc<Context>) -> Result<Action, Err
     })
     .await
     .map_err(Error::FinalizerError);
+
+    let duration = start.elapsed().as_millis() as f64 / 1000.0;
+    ctx.metrics
+        .reconcile_duration
+        .with_label_values(&[])
+        .observe(duration);
 
     info!("Reconciled CustomApp \"{}\" in {}", name, ns);
     action
@@ -191,6 +200,7 @@ pub struct Operator {
 
 fn error_policy(error: &Error, ctx: Arc<Context>) -> Action {
     warn!("reconcile failed: {:?}", error);
+    ctx.metrics.failures.inc();
     Action::requeue(Duration::from_secs(5 * 60))
 }
 
@@ -225,6 +235,11 @@ impl Operator {
             .boxed();
 
         (Self { diagnostics }, controller)
+    }
+
+    /// Metrics
+    pub fn metrics(&self) -> Vec<MetricFamily> {
+        default_registry().gather()
     }
 
     /// State getter
