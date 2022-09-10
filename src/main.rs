@@ -1,10 +1,9 @@
 use kube::runtime::wait::Error;
 pub use operator::operator::*;
 use actix_web::{HttpRequest, Responder, HttpResponse, get, HttpServer, App, web::Data, middleware};
-use operator::telemetry;
 use prometheus::{TextEncoder, Encoder};
-use tracing::{info, warn, subscriber, Level};
-use tracing_subscriber::{prelude::*, EnvFilter, Registry, fmt, FmtSubscriber};
+use tracing::{info, warn};
+use tracing_subscriber::{prelude::*, EnvFilter, Registry};
 
 #[get("/metrics")]
 async fn metrics(c: Data<Operator>, _req: HttpRequest) -> impl Responder {

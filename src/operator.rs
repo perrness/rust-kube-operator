@@ -11,7 +11,7 @@ use kube::{
     }, 
     ResourceExt, Api, Resource, api::{Patch, PatchParams, ListParams}
 };
-use prometheus::{IntCounter, HistogramVec, register_histogram_vec, register_int_counter, proto::MetricFamily, default_registry, timer::duration_to_millis};
+use prometheus::{IntCounter, HistogramVec, register_histogram_vec, register_int_counter, proto::MetricFamily, default_registry};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -22,6 +22,12 @@ use crate::{Error, telemetry};
 
 static CUSTOM_APP_FINALIZER: &str = "customapps.per.naess";
 
+#[derive(Serialize, Deserialize, JsonSchema, Debug, Clone)]
+enum ApplicationState {
+    Running,
+    Starting,
+    Failed,
+}
 /// Generate the Kubernetes wrapper struct "Application" from our Spec and Status struct
 ///
 /// This provides a hook for generating the CRD yaml(in crdgen.rs)
@@ -29,50 +35,49 @@ static CUSTOM_APP_FINALIZER: &str = "customapps.per.naess";
 #[kube(kind = "Application", group = "per.naess", version = "v1", namespaced)]
 #[kube(status = "ApplicationStatus", shortname = "app")]
 pub struct ApplicationSpec {
-    title: String,
-    hide: bool,
-    content: String
+    name: String,
+    image: String,
 }
 
 /// The status object of  `Application`
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct ApplicationStatus {
-    hidden: bool
+    state: ApplicationState
 }
 
 impl Application {
-    fn was_hidden(&self) -> bool {
-        self.status.as_ref().map(|s| s.hidden).unwrap_or(false)
-    }
+    // fn was_hidden(&self) -> bool {
+    //     self.status.as_ref().map(|s| s.hidden).unwrap_or(false)
+    // }
 
     async fn reconcile(&self, ctx: Arc<Context>) -> Result<Action, kube::Error> {
         let client = ctx.client.clone();
         ctx.diagnostics.write().await.last_event = Utc::now();
-        let reporter = ctx.diagnostics.read().await.reporter.clone();
-        let recorder = Recorder::new(client.clone(), reporter, self.object_ref(&()));
         let name = self.name_any();
         let ns = self.namespace().unwrap();
         let apps: Api<Application> = Api::namespaced(client, &ns);
 
-        let should_hide = self.spec.hide;
-        if self.was_hidden() && should_hide {
-            // only send event first time
-            recorder
-                .publish(Event {
-                    type_: EventType::Normal,
-                    reason: "HiddenApplication".into(),
-                    note: Some(format!("Hiding `{}`", name)),
-                    action: "Reconciling".into(),
-                    secondary: None,
-                })
-                .await?;
-        }
+        println!("This is going");
+
+        // let should_hide = self.spec.hide;
+        // if self.was_hidden() && should_hide {
+        //     // only send event first time
+        //     recorder
+        //         .publish(Event {
+        //             type_: EventType::Normal,
+        //             reason: "HiddenApplication".into(),
+        //             note: Some(format!("Hiding `{}`", name)),
+        //             action: "Reconciling".into(),
+        //             secondary: None,
+        //         })
+        //         .await?;
+        // }
         // always overwrite status object with what we saw
         let new_status = Patch::Apply(json!({
             "apiVersion": "per.naess/v1",
             "kind": "Application",
             "status": ApplicationStatus {
-                hidden: should_hide,
+                state: ApplicationState::Starting
             }
         }));
         let ps = PatchParams::apply("cntrlr").force();
