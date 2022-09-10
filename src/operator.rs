@@ -7,7 +7,7 @@ use kube::{
     CustomResource, Client, 
     runtime::{
         events::{Recorder, Reporter, EventType, Event},
-        controller::Action, finalizer, Controller,
+        controller::Action, finalizer, Controller, 
     }, 
     ResourceExt, Api, Resource, api::{Patch, PatchParams, ListParams}
 };
@@ -18,7 +18,7 @@ use serde_json::json;
 use tokio::{sync::RwLock, time::Instant};
 use tracing::{instrument, info, warn, Span, field};
 
-use crate::{Error, telemetry};
+use crate::{Error, telemetry, deployment::create_deployment};
 
 static CUSTOM_APP_FINALIZER: &str = "customapps.per.naess";
 
@@ -32,17 +32,17 @@ enum ApplicationState {
 ///
 /// This provides a hook for generating the CRD yaml(in crdgen.rs)
 #[derive(CustomResource, Deserialize, Serialize, Clone, Debug, JsonSchema)]
-#[kube(kind = "Application", group = "per.naess", version = "v1", namespaced)]
+#[kube(kind = "Application", group = "per.naess", version = "v1alpha1", namespaced)]
 #[kube(status = "ApplicationStatus", shortname = "app")]
 pub struct ApplicationSpec {
-    name: String,
-    image: String,
+    pub name: String,
+    pub image: String,
 }
 
 /// The status object of  `Application`
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct ApplicationStatus {
-    state: ApplicationState
+    state: ApplicationState,
 }
 
 impl Application {
@@ -53,11 +53,18 @@ impl Application {
     async fn reconcile(&self, ctx: Arc<Context>) -> Result<Action, kube::Error> {
         let client = ctx.client.clone();
         ctx.diagnostics.write().await.last_event = Utc::now();
+        let reporter = ctx.diagnostics.read().await.reporter.clone();
+        let recorder = Recorder::new(client.clone(), reporter, self.object_ref(&()));
         let name = self.name_any();
         let ns = self.namespace().unwrap();
-        let apps: Api<Application> = Api::namespaced(client, &ns);
+        let apps: Api<Application> = Api::namespaced(client.clone(), &ns);
 
-        println!("This is going");
+        let application_state: ApplicationState;
+
+        application_state = match create_deployment(&self.spec, &ns, client.clone(), &recorder).await {
+            Ok(()) => ApplicationState::Running,
+            Err(..) => ApplicationState::Failed,
+        };
 
         // let should_hide = self.spec.hide;
         // if self.was_hidden() && should_hide {
@@ -74,10 +81,10 @@ impl Application {
         // }
         // always overwrite status object with what we saw
         let new_status = Patch::Apply(json!({
-            "apiVersion": "per.naess/v1",
+            "apiVersion": "per.naess/v1alpha1",
             "kind": "Application",
             "status": ApplicationStatus {
-                state: ApplicationState::Starting
+                state: application_state
             }
         }));
         let ps = PatchParams::apply("cntrlr").force();
