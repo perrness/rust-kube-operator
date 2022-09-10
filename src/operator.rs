@@ -22,25 +22,25 @@ use crate::{Error, telemetry};
 
 static CUSTOM_APP_FINALIZER: &str = "customapps.per.naess";
 
-/// Generate the Kubernetes wrapper struct "CustomApp" from our Spec and Status struct
+/// Generate the Kubernetes wrapper struct "Application" from our Spec and Status struct
 ///
 /// This provides a hook for generating the CRD yaml(in crdgen.rs)
 #[derive(CustomResource, Deserialize, Serialize, Clone, Debug, JsonSchema)]
-#[kube(kind = "CustomApp", group = "per.naess", version = "v1", namespaced)]
-#[kube(status = "CustomAppStatus", shortname = "cap")]
-pub struct CustomAppSpec {
+#[kube(kind = "Application", group = "per.naess", version = "v1", namespaced)]
+#[kube(status = "ApplicationStatus", shortname = "app")]
+pub struct ApplicationSpec {
     title: String,
     hide: bool,
     content: String
 }
 
-/// The status object of  `CustomApp`
+/// The status object of  `Application`
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
-pub struct CustomAppStatus {
+pub struct ApplicationStatus {
     hidden: bool
 }
 
-impl CustomApp {
+impl Application {
     fn was_hidden(&self) -> bool {
         self.status.as_ref().map(|s| s.hidden).unwrap_or(false)
     }
@@ -52,7 +52,7 @@ impl CustomApp {
         let recorder = Recorder::new(client.clone(), reporter, self.object_ref(&()));
         let name = self.name_any();
         let ns = self.namespace().unwrap();
-        let caps: Api<CustomApp> = Api::namespaced(client, &ns);
+        let apps: Api<Application> = Api::namespaced(client, &ns);
 
         let should_hide = self.spec.hide;
         if self.was_hidden() && should_hide {
@@ -60,7 +60,7 @@ impl CustomApp {
             recorder
                 .publish(Event {
                     type_: EventType::Normal,
-                    reason: "HiddenCustomApp".into(),
+                    reason: "HiddenApplication".into(),
                     note: Some(format!("Hiding `{}`", name)),
                     action: "Reconciling".into(),
                     secondary: None,
@@ -70,13 +70,13 @@ impl CustomApp {
         // always overwrite status object with what we saw
         let new_status = Patch::Apply(json!({
             "apiVersion": "per.naess/v1",
-            "kind": "CustomApp",
-            "status": CustomAppStatus {
+            "kind": "Application",
+            "status": ApplicationStatus {
                 hidden: should_hide,
             }
         }));
         let ps = PatchParams::apply("cntrlr").force();
-        let _o = caps.patch_status(&name, &ps, &new_status).await?;
+        let _o = apps.patch_status(&name, &ps, &new_status).await?;
 
         // If no events were recieved, check back every 5 minutes
         Ok(Action::requeue(Duration::from_secs(5 * 60)))
@@ -92,7 +92,7 @@ impl CustomApp {
         recorder
             .publish(Event { 
                 type_: EventType::Normal, 
-                reason: "DeleteCustomApp".into(), 
+                reason: "DeleteApplication".into(), 
                 note: Some(format!("Delete `{}`", self.name_any())), 
                 action: "Reconciling".into(), 
                 secondary: None 
@@ -114,21 +114,21 @@ struct Context {
     metrics: Metrics,
 }
 
-#[instrument(skip(ctx, cap), fields(trace_id))]
-async fn reconcile(cap: Arc<CustomApp>, ctx: Arc<Context>) -> Result<Action, Error> {
+#[instrument(skip(ctx, app), fields(trace_id))]
+async fn reconcile(app: Arc<Application>, ctx: Arc<Context>) -> Result<Action, Error> {
     let trace_id = telemetry::get_trace_id();
     Span::current().record("trace_id", &field::display(&trace_id));
     let start = Instant::now();
     ctx.metrics.reconciliations.inc();
     let client = ctx.client.clone();
-    let name = cap.name_any();
-    let ns = cap.namespace().unwrap();
-    let caps: Api<CustomApp> = Api::namespaced(client, &ns);
+    let name = app.name_any();
+    let ns = app.namespace().unwrap();
+    let apps: Api<Application> = Api::namespaced(client, &ns);
 
-    let action = finalizer(&caps, CUSTOM_APP_FINALIZER, cap, |event| async {
+    let action = finalizer(&apps, CUSTOM_APP_FINALIZER, app, |event| async {
         match event {
-           finalizer::Event::Apply(cap) =>  cap.reconcile(ctx.clone()).await,
-           finalizer::Event::Cleanup(cap) => cap.cleanup(ctx.clone()).await,
+           finalizer::Event::Apply(app) =>  app.reconcile(ctx.clone()).await,
+           finalizer::Event::Cleanup(app) => app.cleanup(ctx.clone()).await,
         }
     })
     .await
@@ -140,7 +140,7 @@ async fn reconcile(cap: Arc<CustomApp>, ctx: Arc<Context>) -> Result<Action, Err
         .with_label_values(&[])
         .observe(duration);
 
-    info!("Reconciled CustomApp \"{}\" in {}", name, ns);
+    info!("Reconciled Application \"{}\" in {}", name, ns);
     action
 }
 
@@ -155,7 +155,7 @@ pub struct Metrics {
 impl Metrics {
     fn new() -> Self {
         let reconcile_histogram = register_histogram_vec!(
-            "cap_controller_reconcile_duration_seconds",
+            "app_controller_reconcile_duration_seconds",
             "The duration of reconcile to complete in seconds",
             &[],
             vec![0.01, 0.1, 0.25, 0.5, 1., 5., 15., 60.]
@@ -163,9 +163,9 @@ impl Metrics {
         .unwrap();
 
         Metrics { 
-            reconciliations: register_int_counter!("cap_controller_reconciliations_total", "reconciliations").unwrap(), 
+            reconciliations: register_int_counter!("app_controller_reconciliations_total", "reconciliations").unwrap(), 
             failures: register_int_counter!(
-                "cap_controller_reconciliation_errors_total",
+                "app_controller_reconciliation_errors_total",
                 "reconciliation errors"
             ).unwrap(), 
             reconcile_duration: reconcile_histogram 
@@ -186,7 +186,7 @@ impl Diagnostics {
     fn new() -> Self {
         Self {
             last_event: Utc::now(),
-            reporter: "cap-reporter".into()
+            reporter: "app-reporter".into()
         }
     }
 }
@@ -204,7 +204,7 @@ fn error_policy(error: &Error, ctx: Arc<Context>) -> Action {
     Action::requeue(Duration::from_secs(5 * 60))
 }
 
-/// Operator that owns a Controller for CustomApp
+/// Operator that owns a Controller for Application
 impl Operator {
     /// Lifecycle initialization interface for app
     ///
@@ -220,15 +220,15 @@ impl Operator {
             diagnostics: diagnostics.clone(),
         });
 
-        let caps = Api::<CustomApp>::all(client);
+        let apps = Api::<Application>::all(client);
         //Ensure CRD is installed before loop-watching
-        let _r = caps
+        let _r = apps
             .list(&ListParams::default().limit(1))
             .await
             .expect("Is the crd installed? please run: cargo run --bin crdgen | kubectl apply -f -");
 
         // All good. Start controller and return its future.
-        let controller = Controller::new(caps, ListParams::default())
+        let controller = Controller::new(apps, ListParams::default())
             .run(reconcile, error_policy, context)
             .filter_map(|x| async move { std::result::Result::ok(x) })
             .for_each(|_| futures::future::ready(()))
