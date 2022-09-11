@@ -5,3 +5,4 @@ metadata:
 spec:
   name: test-application
   image: nginx:1.14.2
+  deploy: true 

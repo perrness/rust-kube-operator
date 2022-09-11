@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use chrono::DateTime;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
-use k8s_openapi::chrono::Utc;
+use k8s_openapi::{chrono::Utc, api::apps::v1::Deployment};
 use kube::{
     CustomResource, Client, 
     runtime::{
@@ -37,18 +37,23 @@ enum ApplicationState {
 pub struct ApplicationSpec {
     pub name: String,
     pub image: String,
+    pub deploy: bool,
 }
 
 /// The status object of  `Application`
 #[derive(Deserialize, Serialize, Clone, Debug, JsonSchema)]
 pub struct ApplicationStatus {
     state: ApplicationState,
+    deployed: bool,
 }
 
 impl Application {
     // fn was_hidden(&self) -> bool {
     //     self.status.as_ref().map(|s| s.hidden).unwrap_or(false)
     // }
+    fn was_deployed(&self) -> bool {
+        self.status.as_ref().map(|s| s.deployed).unwrap_or(false)
+    }
 
     async fn reconcile(&self, ctx: Arc<Context>) -> Result<Action, kube::Error> {
         let client = ctx.client.clone();
@@ -59,12 +64,31 @@ impl Application {
         let ns = self.namespace().unwrap();
         let apps: Api<Application> = Api::namespaced(client.clone(), &ns);
 
-        let application_state: ApplicationState;
+        let application_state: ApplicationState = ApplicationState::Running;
 
-        application_state = match create_deployment(&self.spec, &ns, client.clone(), &recorder).await {
-            Ok(()) => ApplicationState::Running,
-            Err(..) => ApplicationState::Failed,
-        };
+        // Handle deployment
+        let should_deploy = self.spec.deploy;
+        if self.was_deployed() && should_deploy {
+            create_deployment(&self.spec, &ns, client).await?;
+            recorder.publish(Event { 
+                type_: EventType::Normal, 
+                reason: "CreatingDeployment".into(), 
+                note: Some(format!("Creating deployment `{}`", name)), 
+                action: "Reconciling".into(), 
+                secondary: None, 
+            })
+            .await?;
+        } else if self.was_deployed() && !should_deploy {
+            cleanup_deployment(&self.spec, &ns, client).await?;
+            recorder.publish(Event { 
+                type_: EventType::Normal, 
+                reason: "DeletingDeployment".into(), 
+                note: Some(format!("Deleting deployment `{}`", name)), 
+                action: "Reconciling".into(), 
+                secondary: None, 
+            })
+            .await?;
+        }
 
         // let should_hide = self.spec.hide;
         // if self.was_hidden() && should_hide {
@@ -84,7 +108,8 @@ impl Application {
             "apiVersion": "per.naess/v1alpha1",
             "kind": "Application",
             "status": ApplicationStatus {
-                state: application_state
+                state: application_state,
+                deployed: should_deploy
             }
         }));
         let ps = PatchParams::apply("cntrlr").force();
@@ -102,7 +127,7 @@ impl Application {
         let recorder = Recorder::new(client.clone(), reporter, self.object_ref(&()));
 
         let ns = self.namespace().unwrap();
-        cleanup_deployment(&self.spec, &ns, client.clone(), &recorder).await?;
+        cleanup_deployment(&self.spec, &ns, client.clone()).await?;
 
         recorder
             .publish(Event { 
@@ -249,6 +274,7 @@ impl Operator {
             .for_each(|_| futures::future::ready(()))
             .boxed();
 
+        
         (Self { diagnostics }, controller)
     }
 
