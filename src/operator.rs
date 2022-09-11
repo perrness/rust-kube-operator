@@ -18,7 +18,7 @@ use serde_json::json;
 use tokio::{sync::RwLock, time::Instant};
 use tracing::{instrument, info, warn, Span, field};
 
-use crate::{Error, telemetry, deployment::create_deployment};
+use crate::{Error, telemetry, deployment::{create_deployment, cleanup_deployment}};
 
 static CUSTOM_APP_FINALIZER: &str = "customapps.per.naess";
 
@@ -100,6 +100,9 @@ impl Application {
         ctx.diagnostics.write().await.last_event = Utc::now();
         let reporter = ctx.diagnostics.read().await.reporter.clone();
         let recorder = Recorder::new(client.clone(), reporter, self.object_ref(&()));
+
+        let ns = self.namespace().unwrap();
+        cleanup_deployment(&self.spec, &ns, client.clone(), &recorder).await?;
 
         recorder
             .publish(Event { 

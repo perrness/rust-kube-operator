@@ -1,5 +1,5 @@
 use k8s_openapi::api::apps::v1::Deployment;
-use kube::{api::PostParams, ResourceExt, Client, Api, runtime::events::{Recorder, Event, EventType}}; 
+use kube::{api::{PostParams, DeleteParams}, ResourceExt, Client, Api, runtime::events::{Recorder, Event, EventType}}; 
 use serde_json::json;
 use tracing::info;
 
@@ -80,6 +80,19 @@ pub async fn create_deployment(application_spec: &ApplicationSpec, ns: &str, cli
             })
             .await?;
     }
+
+    Ok(())
+}
+
+pub async fn cleanup_deployment(application_spec: &ApplicationSpec, ns: &str, client: Client, recorder: &Recorder) -> Result<(), kube::Error> {
+    info!("Cleaning up deployment for {}", application_spec.name);
+
+    let deployments: Api<Deployment> = Api::namespaced(client, ns);
+    deployments.delete(&application_spec.name, &DeleteParams::default()).await?
+        .map_left(|o| {
+            info!("Deleting deployment: {:?}", o.status);
+        })
+        .map_right(|s| info!("Deleted deployment: {:?}", s));
 
     Ok(())
 }
