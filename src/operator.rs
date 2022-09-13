@@ -68,27 +68,7 @@ impl Application {
 
         // Handle deployment
         let should_deploy = self.spec.deploy;
-        if self.was_deployed() && should_deploy {
-            create_deployment(&self.spec, &ns, client).await?;
-            recorder.publish(Event { 
-                type_: EventType::Normal, 
-                reason: "CreatingDeployment".into(), 
-                note: Some(format!("Creating deployment `{}`", name)), 
-                action: "Reconciling".into(), 
-                secondary: None, 
-            })
-            .await?;
-        } else if self.was_deployed() && !should_deploy {
-            cleanup_deployment(&self.spec, &ns, client).await?;
-            recorder.publish(Event { 
-                type_: EventType::Normal, 
-                reason: "DeletingDeployment".into(), 
-                note: Some(format!("Deleting deployment `{}`", name)), 
-                action: "Reconciling".into(), 
-                secondary: None, 
-            })
-            .await?;
-        }
+        handle_deployment(&self, &ns, client, recorder, &name).await?;
 
         // let should_hide = self.spec.hide;
         // if self.was_hidden() && should_hide {
@@ -182,6 +162,33 @@ async fn reconcile(app: Arc<Application>, ctx: Arc<Context>) -> Result<Action, E
 
     info!("Reconciled Application \"{}\" in {}", name, ns);
     action
+}
+
+async fn handle_deployment(app: &Application, ns: &str, client: Client, recorder: Recorder, name: &str) -> Result<(), kube::Error> {
+    let should_deploy = app.spec.deploy;
+    if app.was_deployed() && should_deploy {
+        create_deployment(&app.spec, ns, client).await?;
+        recorder.publish(Event { 
+            type_: EventType::Normal, 
+            reason: "CreatingDeployment".into(), 
+            note: Some(format!("Creating deployment `{}`", name)), 
+            action: "Reconciling".into(), 
+            secondary: None, 
+        })
+        .await?;
+    } else if app.was_deployed() && !should_deploy {
+        cleanup_deployment(&app.spec, &ns, client).await?;
+        recorder.publish(Event { 
+            type_: EventType::Normal, 
+            reason: "DeletingDeployment".into(), 
+            note: Some(format!("Deleting deployment `{}`", name)), 
+            action: "Reconciling".into(), 
+            secondary: None, 
+        })
+        .await?;
+    }
+
+    Ok(())
 }
 
 // Prometheus metrics exposed on /metrics
