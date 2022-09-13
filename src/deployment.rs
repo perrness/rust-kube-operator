@@ -63,6 +63,13 @@ pub async fn cleanup_deployment(application_spec: &ApplicationSpec, ns: &str, cl
     info!("Cleaning up deployment for {}", application_spec.name);
 
     let deployments: Api<Deployment> = Api::namespaced(client, ns);
+
+    let dp = deployments.get_opt(&application_spec.name).await?;
+    if dp == None {
+        info!("No deployment active for {}", application_spec.name);
+        return Ok(());
+    };
+
     deployments.delete(&application_spec.name, &DeleteParams::default()).await?
         .map_left(|o| {
             info!("Deleting deployment: {:?}", o.status);
